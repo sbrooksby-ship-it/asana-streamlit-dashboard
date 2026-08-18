@@ -31,11 +31,13 @@ OPT_FIELDS = ",".join(
     ]
 )
 
+
 def required_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise RuntimeError(f"{name} must be set")
     return value
+
 
 def fetch_tasks(token: str, project_gid: str) -> list[dict]:
     tasks = []
@@ -54,24 +56,28 @@ def fetch_tasks(token: str, project_gid: str) -> list[dict]:
 
     return tasks
 
+
 def parse_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
+
 def task_category(task: dict) -> str:
     notes = task.get("notes", "")
+    # Catches both "Type of Request:" and "Request Type:"
     request_type = re.search(
-        r"(?im)^\s*type\s+of\s+request\s*:\s*(?:\r?\n\s*)?([^\r\n]+)",
+        r"(?im)(?:type\s+of\s+request|request\s+type)\s*:\s*([^\r\n\*_]+)",
         notes,
     )
     if request_type and request_type.group(1).strip():
-        return " ".join(request_type.group(1).split())
+        return " ".join(request_type.group(1).split()).title()
     tags = task.get("tags") or []
     if tags:
         return (tags[0].get("name") or "Uncategorized").strip().title()
     match = re.match(r"^\[([^\]]+)\]", task.get("name", ""))
     return match.group(1).strip().title() if match else "Uncategorized"
+
 
 def sync_tasks(database_url: str, tasks: list[dict]) -> None:
     schema = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
@@ -165,14 +171,16 @@ def sync_tasks(database_url: str, tasks: list[dict]) -> None:
                 raise
         connection.commit()
 
+
 def main() -> None:
     load_dotenv()
-    token = required_env("ASANA_TOKEN")
-    database_url = required_env("DATABASE_URL")
-    project_gid = required_env("PROJECT_GID")
+    token = os.environ.get("ASANA_TOKEN") or required_env("ASANA_TOKEN")
+    database_url = os.environ.get("DATABASE_URL") or required_env("DATABASE_URL")
+    project_gid = os.environ.get("PROJECT_GID") or required_env("PROJECT_GID")
     tasks = fetch_tasks(token, project_gid)
     sync_tasks(database_url, tasks)
     print(f"Synced {len(tasks)} tasks from project {project_gid}")
+
 
 if __name__ == "__main__":
     main()
