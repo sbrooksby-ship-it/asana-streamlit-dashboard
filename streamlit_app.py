@@ -10,7 +10,7 @@ import streamlit as st
 from asana_sync import main as run_sync
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Ticket Desk", layout="wide")
+st.set_page_config(page_title="Ticket desk", layout="wide")
 
 # --- CUSTOM STYLING ---
 st.markdown("""
@@ -222,7 +222,7 @@ def check_password():
         return True
 
     st.markdown("<p class='sub-header'>ASANA / DIVISION 5</p>", unsafe_allow_html=True)
-    st.markdown("<h1 class='main-title'>Ticket Desk</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-title'>Ticket desk</h1>", unsafe_allow_html=True)
     st.write("Please sign in to access the dashboard.")
     
     with st.form("login_form"):
@@ -368,7 +368,7 @@ for cat_name, count in cat_list:
 col_head, col_logout = st.columns([4, 1])
 with col_head:
     st.markdown("<p class='sub-header'>ASANA / DIVISION 5</p>", unsafe_allow_html=True)
-    st.markdown("<h1 class='main-title'>Ticket Desk</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-title'>Ticket desk</h1>", unsafe_allow_html=True)
     st.markdown("<p class='main-tagline'>A focused view of what needs attention, grouped by what each ticket is for.</p>", unsafe_allow_html=True)
 
 with col_logout:
@@ -480,7 +480,6 @@ def show_ticket_modal(gid):
         
     st.markdown("---")
     
-    # ACTION SECTION (Two-way Sync to Asana)
     st.markdown("**Actions:**")
     is_completed = task.get("completed", False)
     btn_label = "✅ Mark as Completed" if not is_completed else "↩️ Reopen Ticket"
@@ -522,8 +521,21 @@ def render_tickets(dataframe):
             </div>
             """, unsafe_allow_html=True)
             
-            if st.button("🔍 View Details", key=f"btn_{row['gid']}", type="tertiary"):
-                show_ticket_modal(row['gid'])
+            # --- Inline Action Buttons ---
+            col_btn1, col_btn2, col_blank = st.columns([1.5, 2, 6])
+            with col_btn1:
+                if st.button("🔍 View Details", key=f"btn_{row['gid']}", type="tertiary"):
+                    show_ticket_modal(row['gid'])
+            
+            with col_btn2:
+                quick_btn_label = "↩️ Reopen" if row["completed"] else "✅ Complete"
+                if st.button(quick_btn_label, key=f"btn_quick_{row['gid']}", type="tertiary"):
+                    with st.spinner("Updating..."):
+                        try:
+                            toggle_task_status_in_asana(row['gid'], row["completed"])
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to update Asana: {e}")
             
             st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
 
