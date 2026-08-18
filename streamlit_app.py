@@ -26,6 +26,13 @@ st.markdown("""
         padding-top: 1rem;
     }
     
+    /* Make Input Boxes Readable */
+    div[data-baseweb="input"], div[data-baseweb="select"] {
+        background-color: #ffffff !important;
+        border: 1px solid #d3d3d3 !important;
+        border-radius: 4px;
+    }
+    
     /* Header Subtitle */
     .sub-header {
         color: #e06d53;
@@ -89,7 +96,7 @@ st.markdown("""
         border: 1px solid #e2ded5;
         border-radius: 4px;
         padding: 18px 22px;
-        margin-bottom: 12px;
+        margin-bottom: 4px; /* Reduced to pull button closer */
         position: relative;
     }
     
@@ -142,17 +149,34 @@ st.markdown("""
         margin-right: 10px;
     }
     
-    /* Buttons */
-    .stButton>button {
-        background-color: #2b2e34;
-        color: #ffffff;
-        border: none;
-        border-radius: 3px;
-        font-weight: 600;
+    /* Category Bar Styling */
+    .cat-bar-container {
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
     }
-    .stButton>button:hover {
-        background-color: #111111;
-        color: #ffffff;
+    .cat-bar-label {
+        width: 180px;
+        font-size: 0.85rem;
+        color: #555;
+    }
+    .cat-bar-track {
+        flex-grow: 1;
+        height: 10px;
+        background-color: #e9ecef;
+        margin: 0 15px;
+        border-radius: 2px;
+        overflow: hidden;
+    }
+    .cat-bar-fill {
+        height: 100%;
+        background-color: #e06d53;
+    }
+    .cat-bar-count {
+        font-weight: 700;
+        font-size: 0.9rem;
+        width: 30px;
+        text-align: right;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -191,7 +215,6 @@ if not check_password():
 
 # --- DATABASE CONNECTION ---
 def get_db_connection():
-    # Removed @st.cache_resource so it connects freshly without hitting stale timeout errors
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
 def query_dashboard(category, status, assignee, overdue, search):
@@ -256,7 +279,6 @@ def query_dashboard(category, status, assignee, overdue, search):
 
         return df, categories, assignees, stats, sync_run
     finally:
-        # Ensures connection is cleanly closed to prevent leaking memory
         conn.close()
 
 def fetch_ticket_details(gid):
@@ -335,7 +357,8 @@ with col_q1:
     st.markdown(f"<p style='font-size:0.8rem; color:#888; margin-bottom:15px;'>Last sync: {last_sync_str} · {sync_run[0].title()}</p>", unsafe_allow_html=True)
 
 with col_q2:
-    if st.button("Sync now"):
+    # A single styled button for syncing 
+    if st.button("🔄 Sync now", type="primary", use_container_width=True):
         with st.spinner("Syncing..."):
             try:
                 os.environ["ASANA_TOKEN"] = st.secrets["ASANA_TOKEN"]
@@ -347,6 +370,25 @@ with col_q2:
             except Exception as e:
                 st.error(f"Sync failed: {e}")
 
+# --- CATEGORY BAR CHART ---
+if not df.empty:
+    # Get counts of categories currently displayed
+    cat_counts = df['category'].value_counts()
+    max_val = df['category'].value_counts().max()
+    
+    st.markdown("<div style='margin-bottom: 25px;'>", unsafe_allow_html=True)
+    for cat, count in cat_counts.items():
+        width_pct = int((count / max_val) * 100) if max_val > 0 else 0
+        st.markdown(f"""
+        <div class="cat-bar-container">
+            <div class="cat-bar-label">{cat}</div>
+            <div class="cat-bar-track">
+                <div class="cat-bar-fill" style="width: {width_pct}%;"></div>
+            </div>
+            <div class="cat-bar-count">{count}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # --- CSV EXPORT LINK ---
 if not df.empty:
@@ -401,13 +443,10 @@ def show_ticket_modal(gid):
 
 
 # --- DISPLAY TICKET CARDS ---
-if df.empty:
-    st.info("No tickets found matching your filters.")
-else:
-    for idx, row in df.iterrows():
+def render_tickets(dataframe):
+    for idx, row in dataframe.iterrows():
         status_text = "Completed" if row["completed"] else "Open"
         
-        # Container Card
         with st.container():
             st.markdown(f"""
             <div class="ticket-card">
@@ -422,5 +461,27 @@ else:
             </div>
             """, unsafe_allow_html=True)
             
-            if st.button(f"🔍 Open Ticket Details", key=f"btn_{row['gid']}"):
+            # Button is styled natively as a subtle, clickable text link
+            if st.button("🔍 View Details", key=f"btn_{row['gid']}", type="tertiary"):
                 show_ticket_modal(row['gid'])
+            
+            st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
+
+
+if df.empty:
+    st.info("No tickets found matching your filters.")
+else:
+    # Logic to split Open vs Closed visually if viewing "All tickets"
+    if status_filter == "All tickets":
+        open_df = df[~df['completed']]
+        closed_df = df[df['completed']]
+        
+        if not open_df.empty:
+            render_tickets(open_df)
+            
+        if not closed_df.empty:
+            st.markdown("<h3 style='color: #e06d53; margin-top: 2rem;'>Closed Tickets</h3>", unsafe_allow_html=True)
+            st.divider()
+            render_tickets(closed_df)
+    else:
+        render_tickets(df)
