@@ -10,7 +10,7 @@ from asana_sync import main as run_sync
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Ticket desk", layout="wide")
 
-# --- CUSTOM STYLING (Matching original light beige & coral theme) ---
+# --- CUSTOM STYLING ---
 st.markdown("""
 <style>
     /* Global Background */
@@ -109,10 +109,6 @@ st.markdown("""
         background-color: #e2e3e5;
         color: #41464b;
     }
-    .badge-overdue {
-        background-color: #f8d7da;
-        color: #842029;
-    }
     
     .ticket-title {
         font-size: 1.25rem;
@@ -194,83 +190,89 @@ if not check_password():
 
 
 # --- DATABASE CONNECTION ---
-@st.cache_resource
 def get_db_connection():
+    # Removed @st.cache_resource so it connects freshly without hitting stale timeout errors
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
 def query_dashboard(category, status, assignee, overdue, search):
     conn = get_db_connection()
-    conditions = []
-    values = []
+    try:
+        conditions = []
+        values = []
 
-    if category and category != "All":
-        conditions.append("category = %s")
-        values.append(category)
+        if category and category != "All":
+            conditions.append("category = %s")
+            values.append(category)
 
-    if status == "Open":
-        conditions.append("completed = FALSE AND active = TRUE")
-    elif status == "Completed":
-        conditions.append("completed = TRUE")
-    elif status == "Removed":
-        conditions.append("active = FALSE")
-    elif status == "Active":
-        conditions.append("active = TRUE")
+        if status == "Open":
+            conditions.append("completed = FALSE AND active = TRUE")
+        elif status == "Completed":
+            conditions.append("completed = TRUE")
+        elif status == "Removed":
+            conditions.append("active = FALSE")
+        elif status == "Active":
+            conditions.append("active = TRUE")
 
-    if assignee and assignee != "Everyone":
-        conditions.append("assignee_name = %s")
-        values.append(assignee)
+        if assignee and assignee != "Everyone":
+            conditions.append("assignee_name = %s")
+            values.append(assignee)
 
-    if overdue:
-        conditions.append("completed = FALSE AND active = TRUE AND due_on < CURRENT_DATE")
+        if overdue:
+            conditions.append("completed = FALSE AND active = TRUE AND due_on < CURRENT_DATE")
 
-    if search:
-        conditions.append("(name ILIKE %s OR description ILIKE %s OR assignee_name ILIKE %s)")
-        values.extend([f"%{search}%"] * 3)
+        if search:
+            conditions.append("(name ILIKE %s OR description ILIKE %s OR assignee_name ILIKE %s)")
+            values.extend([f"%{search}%"] * 3)
 
-    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-    query = f"""
-        SELECT gid, name, description, category, completed, active, due_on, assignee_name, last_seen_at, asana_url
-        FROM tasks {where_clause}
-        ORDER BY completed ASC, due_on NULLS LAST, modified_at DESC NULLS LAST, name
-    """
-    df = pd.read_sql(query, conn, params=values)
+        query = f"""
+            SELECT gid, name, description, category, completed, active, due_on, assignee_name, last_seen_at, asana_url
+            FROM tasks {where_clause}
+            ORDER BY completed ASC, due_on NULLS LAST, modified_at DESC NULLS LAST, name
+        """
+        df = pd.read_sql(query, conn, params=values)
 
-    with conn.cursor() as cur:
-        cur.execute("SELECT category, COUNT(*) FROM tasks WHERE active = TRUE GROUP BY category ORDER BY COUNT(*) DESC, category")
-        categories = cur.fetchall()
+        with conn.cursor() as cur:
+            cur.execute("SELECT category, COUNT(*) FROM tasks WHERE active = TRUE GROUP BY category ORDER BY COUNT(*) DESC, category")
+            categories = cur.fetchall()
 
-        cur.execute("SELECT DISTINCT assignee_name FROM tasks WHERE active = TRUE AND assignee_name IS NOT NULL ORDER BY assignee_name")
-        assignees = ["Everyone"] + [row[0] for row in cur.fetchall()]
+            cur.execute("SELECT DISTINCT assignee_name FROM tasks WHERE active = TRUE AND assignee_name IS NOT NULL ORDER BY assignee_name")
+            assignees = ["Everyone"] + [row[0] for row in cur.fetchall()]
 
-        cur.execute("""
-            SELECT 
-                COUNT(*) FILTER (WHERE active), 
-                COUNT(*) FILTER (WHERE active AND NOT completed), 
-                COUNT(*) FILTER (WHERE active AND completed),
-                COUNT(*) FILTER (WHERE active AND NOT completed AND due_on < CURRENT_DATE),
-                COUNT(*) FILTER (WHERE NOT active) 
-            FROM tasks
-        """)
-        stats = cur.fetchone()
+            cur.execute("""
+                SELECT 
+                    COUNT(*) FILTER (WHERE active), 
+                    COUNT(*) FILTER (WHERE active AND NOT completed), 
+                    COUNT(*) FILTER (WHERE active AND completed),
+                    COUNT(*) FILTER (WHERE active AND NOT completed AND due_on < CURRENT_DATE),
+                    COUNT(*) FILTER (WHERE NOT active) 
+                FROM tasks
+            """)
+            stats = cur.fetchone()
 
-        cur.execute("SELECT status, finished_at, task_count, error_message FROM sync_runs ORDER BY id DESC LIMIT 1")
-        sync_run = cur.fetchone() or ("never", None, 0, None)
+            cur.execute("SELECT status, finished_at, task_count, error_message FROM sync_runs ORDER BY id DESC LIMIT 1")
+            sync_run = cur.fetchone() or ("never", None, 0, None)
 
-    return df, categories, assignees, stats, sync_run
-
+        return df, categories, assignees, stats, sync_run
+    finally:
+        # Ensures connection is cleanly closed to prevent leaking memory
+        conn.close()
 
 def fetch_ticket_details(gid):
     conn = get_db_connection()
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM tasks WHERE gid = %s", (gid,))
-        row = cur.fetchone()
-        columns = [desc[0] for desc in cur.description] if row else []
-        task = dict(zip(columns, row)) if row else None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM tasks WHERE gid = %s", (gid,))
+            row = cur.fetchone()
+            columns = [desc[0] for desc in cur.description] if row else []
+            task = dict(zip(columns, row)) if row else None
 
-        cur.execute("SELECT changed_at, change_type, details FROM task_history WHERE task_gid = %s ORDER BY changed_at DESC", (gid,))
-        history = cur.fetchall()
-    return task, history
+            cur.execute("SELECT changed_at, change_type, details FROM task_history WHERE task_gid = %s ORDER BY changed_at DESC", (gid,))
+            history = cur.fetchall()
+        return task, history
+    finally:
+        conn.close()
 
 
 # --- SIDEBAR / FILTERS ---
