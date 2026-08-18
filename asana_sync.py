@@ -65,18 +65,26 @@ def parse_timestamp(value: str | None) -> datetime | None:
 
 def task_category(task: dict) -> str:
     notes = task.get("notes", "")
-    # Catches both "Type of Request:" and "Request Type:"
     request_type = re.search(
         r"(?im)(?:type\s+of\s+request|request\s+type)\s*:\s*([^\r\n\*_]+)",
         notes,
     )
+    category = "Uncategorized"
     if request_type and request_type.group(1).strip():
-        return " ".join(request_type.group(1).split()).title()
-    tags = task.get("tags") or []
-    if tags:
-        return (tags[0].get("name") or "Uncategorized").strip().title()
-    match = re.match(r"^\[([^\]]+)\]", task.get("name", ""))
-    return match.group(1).strip().title() if match else "Uncategorized"
+        category = " ".join(request_type.group(1).split()).title()
+    else:
+        tags = task.get("tags") or []
+        if tags:
+            category = (tags[0].get("name") or "Uncategorized").strip().title()
+        else:
+            match = re.match(r"^\[([^\]]+)\]", task.get("name", ""))
+            category = match.group(1).strip().title() if match else "Uncategorized"
+            
+    # Merge continuous improvement categories
+    if "Continuous Improvement" in category:
+        return "Continuous Improvement"
+        
+    return category
 
 
 def sync_tasks(database_url: str, tasks: list[dict]) -> None:
