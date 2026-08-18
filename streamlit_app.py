@@ -2,13 +2,15 @@ import hmac
 import os
 import io
 import csv
+import json
 import psycopg2
+import requests
 import pandas as pd
 import streamlit as st
 from asana_sync import main as run_sync
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Ticket desk", layout="wide")
+st.set_page_config(page_title="Ticket Desk", layout="wide")
 
 # --- CUSTOM STYLING ---
 st.markdown("""
@@ -96,7 +98,7 @@ st.markdown("""
         border: 1px solid #e2ded5;
         border-radius: 4px;
         padding: 18px 22px;
-        margin-bottom: 4px; /* Reduced to pull button closer */
+        margin-bottom: 4px;
         position: relative;
     }
     
@@ -213,9 +215,35 @@ if not check_password():
     st.stop()
 
 
-# --- DATABASE CONNECTION ---
+# --- DATABASE & API LOGIC ---
 def get_db_connection():
     return psycopg2.connect(st.secrets["DATABASE_URL"])
+
+def toggle_task_status_in_asana(gid, current_status):
+    """Sends command to Asana to toggle completion, then updates local DB."""
+    new_status = not current_status
+    token = st.secrets["ASANA_TOKEN"]
+    
+    # 1. Update Asana via API
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    data = {"data": {"completed": new_status}}
+    response = requests.put(f"https://app.asana.com/api/1.0/tasks/{gid}", json=data, headers=headers)
+    response.raise_for_status()
+
+    # 2. Update local database instantly
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tasks SET completed = %s, modified_at = NOW() WHERE gid = %s", (new_status, gid))
+            history_details = json.dumps({"fields": ["completed"]})
+            cur.execute("INSERT INTO task_history (task_gid, change_type, details) VALUES (%s, 'updated', %s::jsonb)", (gid, history_details))
+        conn.commit()
+    finally:
+        conn.close()
 
 def query_dashboard(category, status, assignee, overdue, search):
     conn = get_db_connection()
@@ -357,7 +385,6 @@ with col_q1:
     st.markdown(f"<p style='font-size:0.8rem; color:#888; margin-bottom:15px;'>Last sync: {last_sync_str} · {sync_run[0].title()}</p>", unsafe_allow_html=True)
 
 with col_q2:
-    # A single styled button for syncing 
     if st.button("🔄 Sync now", type="primary", use_container_width=True):
         with st.spinner("Syncing..."):
             try:
@@ -372,7 +399,6 @@ with col_q2:
 
 # --- CATEGORY BAR CHART ---
 if not df.empty:
-    # Get counts of categories currently displayed
     cat_counts = df['category'].value_counts()
     max_val = df['category'].value_counts().max()
     
@@ -430,6 +456,25 @@ def show_ticket_modal(gid):
     st.markdown("**Description:**")
     st.write(task.get("description") or "*No description provided.*")
     
+    if task.get("asana_url"):
+        st.markdown(f"[View in Asana]({task.get('asana_url')})")
+        
+    st.markdown("---")
+    
+    # ACTION SECTION (Two-way Sync to Asana)
+    st.markdown("**Actions:**")
+    is_completed = task.get("completed", False)
+    btn_label = "✅ Mark as Completed" if not is_completed else "↩️ Reopen Ticket"
+    
+    if st.button(btn_label, type="primary"):
+        with st.spinner("Updating Asana..."):
+            try:
+                toggle_task_status_in_asana(gid, is_completed)
+                st.success("Ticket updated successfully!")
+                st.rerun() # Refresh the page instantly to reflect the change
+            except Exception as e:
+                st.error(f"Failed to update Asana: {e}")
+                
     st.markdown("---")
     st.markdown("**History Log:**")
     if history:
@@ -437,9 +482,6 @@ def show_ticket_modal(gid):
             st.caption(f"• **{change_type.title()}** on {changed_at.strftime('%Y-%m-%d %H:%M')} — {details}")
     else:
         st.caption("No history recorded.")
-        
-    if task.get("asana_url"):
-        st.markdown(f"[View in Asana]({task.get('asana_url')})")
 
 
 # --- DISPLAY TICKET CARDS ---
@@ -461,7 +503,6 @@ def render_tickets(dataframe):
             </div>
             """, unsafe_allow_html=True)
             
-            # Button is styled natively as a subtle, clickable text link
             if st.button("🔍 View Details", key=f"btn_{row['gid']}", type="tertiary"):
                 show_ticket_modal(row['gid'])
             
