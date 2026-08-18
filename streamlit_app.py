@@ -10,7 +10,7 @@ import streamlit as st
 from asana_sync import main as run_sync
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Ticket desk", layout="wide")
+st.set_page_config(page_title="Ticket Desk", layout="wide")
 
 # --- CUSTOM STYLING ---
 st.markdown("""
@@ -222,7 +222,7 @@ def check_password():
         return True
 
     st.markdown("<p class='sub-header'>ASANA / DIVISION 5</p>", unsafe_allow_html=True)
-    st.markdown("<h1 class='main-title'>Ticket desk</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-title'>Ticket Desk</h1>", unsafe_allow_html=True)
     st.write("Please sign in to access the dashboard.")
     
     with st.form("login_form"):
@@ -368,7 +368,7 @@ for cat_name, count in cat_list:
 col_head, col_logout = st.columns([4, 1])
 with col_head:
     st.markdown("<p class='sub-header'>ASANA / DIVISION 5</p>", unsafe_allow_html=True)
-    st.markdown("<h1 class='main-title'>Ticket desk</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-title'>Ticket Desk</h1>", unsafe_allow_html=True)
     st.markdown("<p class='main-tagline'>A focused view of what needs attention, grouped by what each ticket is for.</p>", unsafe_allow_html=True)
 
 with col_logout:
