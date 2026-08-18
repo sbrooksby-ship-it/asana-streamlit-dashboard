@@ -10,7 +10,7 @@ import streamlit as st
 from asana_sync import main as run_sync
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Ticket Desk", layout="wide")
+st.set_page_config(page_title="Ticket desk", layout="wide")
 
 # --- CUSTOM STYLING ---
 st.markdown("""
@@ -28,14 +28,37 @@ st.markdown("""
         padding-top: 1rem;
     }
     
-    /* Make Input Boxes Readable */
-    div[data-baseweb="input"], div[data-baseweb="select"] {
+    /* --- FORM & INPUT STYLING --- */
+    
+    /* Make the login form look like a clean white card */
+    [data-testid="stForm"] {
         background-color: #ffffff !important;
         border: 1px solid #d3d3d3 !important;
-        border-radius: 4px;
+        border-radius: 8px !important;
+        padding: 2rem !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05) !important;
+        max-width: 600px; /* Keeps the login box from stretching too wide */
     }
     
-    /* Header Subtitle */
+    /* Force Input Boxes to be white with a strong gray border */
+    .stTextInput div[data-baseweb="base-input"], 
+    .stSelectbox div[data-baseweb="select"] {
+        background-color: #ffffff !important;
+        border: 1px solid #999999 !important;
+        border-radius: 4px !important;
+    }
+    
+    /* Ensure the text inside the box is dark and readable */
+    .stTextInput input {
+        color: #111111 !important;
+    }
+    
+    /* When the box is clicked/focused, make the border darker instead of blue */
+    .stTextInput div[data-baseweb="base-input"]:focus-within {
+        border: 1px solid #111111 !important;
+    }
+    
+    /* --- HEADER & TYPOGRAPHY --- */
     .sub-header {
         color: #e06d53;
         font-size: 0.8rem;
@@ -60,7 +83,7 @@ st.markdown("""
         margin-bottom: 1.5rem;
     }
     
-    /* Metric Card Grid */
+    /* --- METRICS --- */
     .metric-container {
         display: flex;
         gap: 0px;
@@ -92,7 +115,7 @@ st.markdown("""
         color: #1a1a1a;
     }
     
-    /* Ticket Card Styling */
+    /* --- TICKET CARDS --- */
     .ticket-card {
         background: #ffffff;
         border: 1px solid #e2ded5;
@@ -151,7 +174,7 @@ st.markdown("""
         margin-right: 10px;
     }
     
-    /* Category Bar Styling */
+    /* --- CATEGORY BAR GRAPH --- */
     .cat-bar-container {
         display: flex;
         align-items: center;
@@ -220,11 +243,9 @@ def get_db_connection():
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
 def toggle_task_status_in_asana(gid, current_status):
-    """Sends command to Asana to toggle completion, then updates local DB."""
     new_status = not current_status
     token = st.secrets["ASANA_TOKEN"]
     
-    # 1. Update Asana via API
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -234,7 +255,6 @@ def toggle_task_status_in_asana(gid, current_status):
     response = requests.put(f"https://app.asana.com/api/1.0/tasks/{gid}", json=data, headers=headers)
     response.raise_for_status()
 
-    # 2. Update local database instantly
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
@@ -339,7 +359,6 @@ overdue_filter = st.sidebar.checkbox("Overdue only", value=False)
 cat_options = ["All"] + [c[0] for c in cat_list]
 category_filter = st.sidebar.selectbox("Category Filter", cat_options)
 
-# Sidebar Categories list summary
 st.sidebar.markdown("<br><p style='color:#e06d53; font-weight:700; font-size:0.75rem; letter-spacing:1px;'>CATEGORIES</p>", unsafe_allow_html=True)
 for cat_name, count in cat_list:
     st.sidebar.markdown(f"<div style='display:flex; justify-content:space-between; font-size:0.85rem; color:#444; margin-bottom:4px;'><span>{cat_name}</span><span style='font-weight:600;'>{count}</span></div>", unsafe_allow_html=True)
@@ -471,7 +490,7 @@ def show_ticket_modal(gid):
             try:
                 toggle_task_status_in_asana(gid, is_completed)
                 st.success("Ticket updated successfully!")
-                st.rerun() # Refresh the page instantly to reflect the change
+                st.rerun() 
             except Exception as e:
                 st.error(f"Failed to update Asana: {e}")
                 
@@ -508,11 +527,9 @@ def render_tickets(dataframe):
             
             st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
 
-
 if df.empty:
     st.info("No tickets found matching your filters.")
 else:
-    # Logic to split Open vs Closed visually if viewing "All tickets"
     if status_filter == "All tickets":
         open_df = df[~df['completed']]
         closed_df = df[df['completed']]
