@@ -28,6 +28,9 @@ OPT_FIELDS = ",".join(
         "projects.name",
         "tags.gid",
         "tags.name",
+        "memberships.section.gid",
+        "memberships.section.name",
+        "memberships.project.gid",
     ]
 )
 
@@ -79,24 +82,33 @@ def task_category(task: dict) -> str:
         else:
             match = re.match(r"^\[([^\]]+)\]", task.get("name", ""))
             category = match.group(1).strip().title() if match else "Uncategorized"
-            
-    # Merge continuous improvement categories
+
     if "Continuous Improvement" in category:
         return "Continuous Improvement"
-        
+
     return category
 
 
-def sync_tasks(database_url: str, tasks: list[dict]) -> None:
+def extract_section(task: dict, project_gid: str) -> tuple[str | None, str]:
+    for membership in task.get("memberships", []):
+        proj = membership.get("project") or {}
+        if proj.get("gid") == project_gid:
+            sec = membership.get("section") or {}
+            return sec.get("gid"), sec.get("name") or "No Section"
+    return None, "No Section"
+
+
+def sync_tasks(database_url: str, tasks: list[dict], project_gid: str) -> None:
     schema = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
+    
     upsert = """
         INSERT INTO tasks (
             gid, name, description, category, asana_url, active, removed_at, last_seen_at, created_at, modified_at, completed, due_on, due_at,
-            assignee_gid, assignee_name, projects, tags, raw, synced_at
+            assignee_gid, assignee_name, projects, tags, raw, synced_at, section_gid, section_name
         ) VALUES (
             %(gid)s, %(name)s, %(description)s, %(category)s, %(asana_url)s, TRUE, NULL, NOW(), %(created_at)s, %(modified_at)s, %(completed)s,
             %(due_on)s, %(due_at)s, %(assignee_gid)s, %(assignee_name)s,
-            %(projects)s::jsonb, %(tags)s::jsonb, %(raw)s::jsonb, NOW()
+            %(projects)s::jsonb, %(tags)s::jsonb, %(raw)s::jsonb, NOW(), %(section_gid)s, %(section_name)s
         )
         ON CONFLICT (gid) DO UPDATE SET
             name = EXCLUDED.name,
@@ -116,54 +128,45 @@ def sync_tasks(database_url: str, tasks: list[dict]) -> None:
             projects = EXCLUDED.projects,
             tags = EXCLUDED.tags,
             raw = EXCLUDED.raw,
-            synced_at = NOW()
+            synced_at = NOW(),
+            section_gid = EXCLUDED.section_gid,
+            section_name = EXCLUDED.section_name
     """
 
     with psycopg2.connect(database_url) as connection:
         with connection.cursor() as cursor:
             cursor.execute(schema)
+            # Ensure columns exist
+            cursor.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS section_gid TEXT;")
+            cursor.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS section_name TEXT;")
+            
             cursor.execute("INSERT INTO sync_runs (status) VALUES ('running') RETURNING id")
             run_id = cursor.fetchone()[0]
             try:
                 for task in tasks:
-                    cursor.execute(
-                        "SELECT name, description, category, completed, due_on, assignee_name, active FROM tasks WHERE gid = %s",
-                        (task["gid"],),
-                    )
-                    previous = cursor.fetchone()
-                    current = (
-                        task.get("name", ""),
-                        task.get("notes", ""),
-                        task_category(task),
-                        task.get("completed", False),
-                        task.get("due_on"),
-                        (task.get("assignee") or {}).get("name"),
-                        True,
-                    )
-                    if previous is None:
-                        change_type = "created"
-                        details = {"name": current[0], "category": current[2]}
-                    else:
-                        changed = [
-                            field for field, old, new in zip(
-                                ["name", "description", "category", "completed", "due_on", "assignee_name", "active"],
-                                previous,
-                                current,
-                            ) if old != new
-                        ]
-                        change_type = "updated" if changed else None
-                        details = {"fields": changed}
+                    sec_gid, sec_name = extract_section(task, project_gid)
                     assignee = task.get("assignee") or {}
+                    
                     cursor.execute(upsert, {
-                        "gid": task["gid"], "name": task.get("name", ""), "description": task.get("notes", ""),
-                        "category": task_category(task), "asana_url": task.get("permalink_url"),
-                        "created_at": parse_timestamp(task.get("created_at")), "modified_at": parse_timestamp(task.get("modified_at")),
-                        "completed": task.get("completed", False), "due_on": task.get("due_on"), "due_at": parse_timestamp(task.get("due_at")),
-                        "assignee_gid": assignee.get("gid"), "assignee_name": assignee.get("name"),
-                        "projects": json.dumps(task.get("projects", [])), "tags": json.dumps(task.get("tags", [])), "raw": json.dumps(task),
+                        "gid": task["gid"], 
+                        "name": task.get("name", ""), 
+                        "description": task.get("notes", ""),
+                        "category": task_category(task), 
+                        "asana_url": task.get("permalink_url"),
+                        "created_at": parse_timestamp(task.get("created_at")), 
+                        "modified_at": parse_timestamp(task.get("modified_at")),
+                        "completed": task.get("completed", False), 
+                        "due_on": task.get("due_on"), 
+                        "due_at": parse_timestamp(task.get("due_at")),
+                        "assignee_gid": assignee.get("gid"), 
+                        "assignee_name": assignee.get("name"),
+                        "projects": json.dumps(task.get("projects", [])), 
+                        "tags": json.dumps(task.get("tags", [])), 
+                        "raw": json.dumps(task),
+                        "section_gid": sec_gid,
+                        "section_name": sec_name
                     })
-                    if change_type:
-                        cursor.execute("INSERT INTO task_history (task_gid, change_type, details) VALUES (%s, %s, %s::jsonb)", (task["gid"], change_type, json.dumps(details)))
+                    
                 gids = [task["gid"] for task in tasks]
                 missing_query = "UPDATE tasks SET active = FALSE, removed_at = COALESCE(removed_at, NOW()) WHERE active = TRUE"
                 if gids:
@@ -186,7 +189,7 @@ def main() -> None:
     database_url = os.environ.get("DATABASE_URL") or required_env("DATABASE_URL")
     project_gid = os.environ.get("PROJECT_GID") or required_env("PROJECT_GID")
     tasks = fetch_tasks(token, project_gid)
-    sync_tasks(database_url, tasks)
+    sync_tasks(database_url, tasks, project_gid)
     print(f"Synced {len(tasks)} tasks from project {project_gid}")
 
 
