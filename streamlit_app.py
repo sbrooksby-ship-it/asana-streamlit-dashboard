@@ -35,12 +35,21 @@ st.markdown("""
         max-width: 600px; 
     }
     
+    /* Input & Select Box Overrides */
     .stTextInput div[data-baseweb="base-input"], 
     .stSelectbox div[data-baseweb="select"],
+    div[data-baseweb="select"],
+    div[data-baseweb="select"] > div,
     div[data-baseweb="input"] {
         background-color: #ffffff !important;
-        border: 1px solid #999999 !important;
+        border: 1px solid #c3c3c3 !important;
         border-radius: 4px !important;
+        color: #111111 !important;
+    }
+    
+    .stSelectbox div[data-baseweb="select"] * {
+        background-color: #ffffff !important;
+        color: #111111 !important;
     }
     
     .stTextInput input {
@@ -231,10 +240,8 @@ if not check_password():
 def get_db_connection():
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
-# Cache the sections for 10 minutes so it doesn't slow down your app
 @st.cache_data(ttl=600)
 def fetch_asana_sections():
-    """Fetches list of sections directly from Asana API."""
     token = st.secrets["ASANA_TOKEN"]
     project_gid = st.secrets["PROJECT_GID"]
     headers = {"Authorization": f"Bearer {token}"}
@@ -244,7 +251,6 @@ def fetch_asana_sections():
     return {sec["name"]: sec["gid"] for sec in data}
 
 def move_task_to_section_in_asana(task_gid, section_gid, section_name):
-    """Moves task to a new section/board column in Asana and updates DB."""
     token = st.secrets["ASANA_TOKEN"]
     headers = {
         "Authorization": f"Bearer {token}",
@@ -374,7 +380,6 @@ def fetch_ticket_details(gid):
 
 # --- INTERACTIVE CALLBACKS ---
 def handle_quick_move(task_gid, widget_key, current_sec):
-    """Callback fired instantly when the dropdown on the ticket card is changed."""
     new_sec = st.session_state[widget_key]
     if new_sec != current_sec:
         sections_map = fetch_asana_sections()
@@ -524,7 +529,26 @@ def show_ticket_modal(gid):
     st.markdown("---")
     st.markdown("**Actions:**")
     
-    # Complete/Reopen Action
+    try:
+        sections_map = fetch_asana_sections()
+        section_names = list(sections_map.keys())
+        current_sec = task.get("section_name")
+        default_index = section_names.index(current_sec) if current_sec in section_names else 0
+        
+        selected_sec = st.selectbox("Move to Department / Column:", section_names, index=default_index)
+        if selected_sec != current_sec:
+            if st.button("Confirm Move"):
+                with st.spinner("Moving task in Asana..."):
+                    try:
+                        new_gid = sections_map[selected_sec]
+                        move_task_to_section_in_asana(gid, new_gid, selected_sec)
+                        st.success(f"Moved to {selected_sec}!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to move: {e}")
+    except Exception as e:
+        st.caption(f"Could not load departments: {e}")
+
     is_completed = task.get("completed", False)
     btn_label = "✅ Mark as Completed" if not is_completed else "↩️ Reopen Ticket"
     
@@ -573,8 +597,6 @@ def render_tickets(dataframe):
             </div>
             """, unsafe_allow_html=True)
             
-            # --- Inline Action Buttons & Dropdown ---
-            # Creates 4 columns: View Button | Complete Button | Move Dropdown | Blank Space
             col_btn1, col_btn2, col_dd, col_blank = st.columns([1.5, 2, 3, 5.5])
             
             with col_btn1:
@@ -603,7 +625,7 @@ def render_tickets(dataframe):
                         key=widget_key,
                         on_change=handle_quick_move,
                         args=(row['gid'], widget_key, current_sec),
-                        label_visibility="collapsed" # Hides the label so it fits perfectly
+                        label_visibility="collapsed"
                     )
             
             st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
