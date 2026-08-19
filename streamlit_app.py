@@ -15,50 +15,38 @@ st.set_page_config(page_title="Ticket desk", layout="wide")
 # --- CUSTOM STYLING ---
 st.markdown("""
 <style>
-    /* Global Background */
     .stApp {
         background-color: #f5f3ee;
         color: #2b2b2b;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     
-    /* Sidebar Background */
     [data-testid="stSidebar"] {
         background-color: #ede9e1;
         padding-top: 1rem;
     }
     
-    /* --- FORM & INPUT STYLING --- */
-    
-    /* Make the login form look like a clean white card */
     [data-testid="stForm"] {
         background-color: #ffffff !important;
         border: 1px solid #d3d3d3 !important;
         border-radius: 8px !important;
         padding: 2rem !important;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05) !important;
-        max-width: 600px; /* Keeps the login box from stretching too wide */
+        max-width: 600px; 
     }
     
-    /* Force Input Boxes to be white with a strong gray border */
     .stTextInput div[data-baseweb="base-input"], 
-    .stSelectbox div[data-baseweb="select"] {
+    .stSelectbox div[data-baseweb="select"],
+    div[data-baseweb="input"] {
         background-color: #ffffff !important;
         border: 1px solid #999999 !important;
         border-radius: 4px !important;
     }
     
-    /* Ensure the text inside the box is dark and readable */
     .stTextInput input {
         color: #111111 !important;
     }
     
-    /* When the box is clicked/focused, make the border darker instead of blue */
-    .stTextInput div[data-baseweb="base-input"]:focus-within {
-        border: 1px solid #111111 !important;
-    }
-    
-    /* --- HEADER & TYPOGRAPHY --- */
     .sub-header {
         color: #e06d53;
         font-size: 0.8rem;
@@ -83,7 +71,6 @@ st.markdown("""
         margin-bottom: 1.5rem;
     }
     
-    /* --- METRICS --- */
     .metric-container {
         display: flex;
         gap: 0px;
@@ -115,7 +102,6 @@ st.markdown("""
         color: #1a1a1a;
     }
     
-    /* --- TICKET CARDS --- */
     .ticket-card {
         background: #ffffff;
         border: 1px solid #e2ded5;
@@ -136,6 +122,10 @@ st.markdown("""
     .badge-category {
         background-color: #d1e7dd;
         color: #0f5132;
+    }
+    .badge-section {
+        background-color: #cfe2ff;
+        color: #084298;
     }
     .badge-status {
         background-color: #e2e3e5;
@@ -174,7 +164,6 @@ st.markdown("""
         margin-right: 10px;
     }
     
-    /* --- CATEGORY BAR GRAPH --- */
     .cat-bar-container {
         display: flex;
         align-items: center;
@@ -238,18 +227,47 @@ if not check_password():
     st.stop()
 
 
-# --- DATABASE & API LOGIC ---
+# --- DATABASE & ASANA API LOGIC ---
 def get_db_connection():
     return psycopg2.connect(st.secrets["DATABASE_URL"])
+
+def fetch_asana_sections():
+    """Fetches list of sections directly from Asana API."""
+    token = st.secrets["ASANA_TOKEN"]
+    project_gid = st.secrets["PROJECT_GID"]
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"https://app.asana.com/api/1.0/projects/{project_gid}/sections", headers=headers)
+    response.raise_for_status()
+    data = response.json().get("data", [])
+    return {sec["name"]: sec["gid"] for sec in data}
+
+def move_task_to_section_in_asana(task_gid, section_gid, section_name):
+    """Moves task to a new section/board column in Asana and updates DB."""
+    token = st.secrets["ASANA_TOKEN"]
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    body = {"data": {"task": task_gid}}
+    response = requests.post(f"https://app.asana.com/api/1.0/sections/{section_gid}/addTask", json=body, headers=headers)
+    response.raise_for_status()
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tasks SET section_gid = %s, section_name = %s, modified_at = NOW() WHERE gid = %s", (section_gid, section_name, task_gid))
+            history_details = json.dumps({"fields": ["section"], "new_section": section_name})
+            cur.execute("INSERT INTO task_history (task_gid, change_type, details) VALUES (%s, 'updated', %s::jsonb)", (task_gid, history_details))
+        conn.commit()
+    finally:
+        conn.close()
 
 def toggle_task_status_in_asana(gid, current_status):
     new_status = not current_status
     token = st.secrets["ASANA_TOKEN"]
-    
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Content-Type": "application/json"
     }
     data = {"data": {"completed": new_status}}
     response = requests.put(f"https://app.asana.com/api/1.0/tasks/{gid}", json=data, headers=headers)
@@ -265,7 +283,7 @@ def toggle_task_status_in_asana(gid, current_status):
     finally:
         conn.close()
 
-def query_dashboard(category, status, assignee, overdue, search):
+def query_dashboard(category, status, assignee, overdue, search, section, date_range=None):
     conn = get_db_connection()
     try:
         conditions = []
@@ -274,6 +292,10 @@ def query_dashboard(category, status, assignee, overdue, search):
         if category and category != "All":
             conditions.append("category = %s")
             values.append(category)
+
+        if section and section != "All":
+            conditions.append("section_name = %s")
+            values.append(section)
 
         if status == "Open":
             conditions.append("completed = FALSE AND active = TRUE")
@@ -295,10 +317,18 @@ def query_dashboard(category, status, assignee, overdue, search):
             conditions.append("(name ILIKE %s OR description ILIKE %s OR assignee_name ILIKE %s)")
             values.extend([f"%{search}%"] * 3)
 
+        if date_range:
+            if len(date_range) == 2:
+                conditions.append("due_on >= %s AND due_on <= %s")
+                values.extend([date_range[0], date_range[1]])
+            elif len(date_range) == 1:
+                conditions.append("due_on = %s")
+                values.append(date_range[0])
+
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         query = f"""
-            SELECT gid, name, description, category, completed, active, due_on, assignee_name, last_seen_at, asana_url
+            SELECT gid, name, description, category, completed, active, due_on, assignee_name, last_seen_at, asana_url, section_name, section_gid
             FROM tasks {where_clause}
             ORDER BY completed ASC, due_on NULLS LAST, modified_at DESC NULLS LAST, name
         """
@@ -307,6 +337,9 @@ def query_dashboard(category, status, assignee, overdue, search):
         with conn.cursor() as cur:
             cur.execute("SELECT category, COUNT(*) FROM tasks WHERE active = TRUE GROUP BY category ORDER BY COUNT(*) DESC, category")
             categories = cur.fetchall()
+
+            cur.execute("SELECT section_name, COUNT(*) FROM tasks WHERE active = TRUE AND section_name IS NOT NULL GROUP BY section_name ORDER BY section_name")
+            sections = cur.fetchall()
 
             cur.execute("SELECT DISTINCT assignee_name FROM tasks WHERE active = TRUE AND assignee_name IS NOT NULL ORDER BY assignee_name")
             assignees = ["Everyone"] + [row[0] for row in cur.fetchall()]
@@ -325,7 +358,7 @@ def query_dashboard(category, status, assignee, overdue, search):
             cur.execute("SELECT status, finished_at, task_count, error_message FROM sync_runs ORDER BY id DESC LIMIT 1")
             sync_run = cur.fetchone() or ("never", None, 0, None)
 
-        return df, categories, assignees, stats, sync_run
+        return df, categories, sections, assignees, stats, sync_run
     finally:
         conn.close()
 
@@ -349,9 +382,13 @@ def fetch_ticket_details(gid):
 st.sidebar.markdown("<p style='color:#e06d53; font-weight:700; font-size:0.75rem; letter-spacing:1px;'>ORGANIZE</p>", unsafe_allow_html=True)
 
 search_query = st.sidebar.text_input("Find a ticket", placeholder="Name, detail, person...", label_visibility="visible")
+date_range = st.sidebar.date_input("Due Date Range", value=[], help="Select start and end dates.")
 status_filter = st.sidebar.selectbox("Status", ["All tickets", "Open", "Completed", "Active", "Removed"], index=1)
 
-_df, cat_list, assign_options, stats, sync_run = query_dashboard("", "All tickets", "Everyone", False, "")
+_df, cat_list, sec_list, assign_options, stats, sync_run = query_dashboard("", "All tickets", "Everyone", False, "", "All", None)
+
+sec_options = ["All"] + [s[0] for s in sec_list if s[0]]
+section_filter = st.sidebar.selectbox("Department / Section", sec_options)
 
 assignee_filter = st.sidebar.selectbox("Assignee", assign_options)
 overdue_filter = st.sidebar.checkbox("Overdue only", value=False)
@@ -391,7 +428,7 @@ st.markdown(f"""
 
 
 # --- DATA FETCH ---
-df, _, _, _, sync_run = query_dashboard(category_filter, status_filter, assignee_filter, overdue_filter, search_query)
+df, _, _, _, _, sync_run = query_dashboard(category_filter, status_filter, assignee_filter, overdue_filter, search_query, section_filter, date_range)
 
 
 # --- WORK QUEUE HEADER ---
@@ -435,13 +472,13 @@ if not df.empty:
         """, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# --- CSV EXPORT LINK ---
+# --- CSV EXPORT ---
 if not df.empty:
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Name", "Category", "Status", "Assignee", "Due Date", "Description"])
+    writer.writerow(["Name", "Category", "Department/Section", "Status", "Assignee", "Due Date", "Description"])
     for _, task in df.iterrows():
-        writer.writerow([task["name"], task["category"], "Completed" if task["completed"] else "Open", task["assignee_name"] or "Unassigned", task["due_on"] or "", task["description"]])
+        writer.writerow([task["name"], task["category"], task.get("section_name") or "", "Completed" if task["completed"] else "Open", task["assignee_name"] or "Unassigned", task["due_on"] or "", task["description"]])
     
     st.download_button(
         label="Export CSV ↓",
@@ -466,6 +503,7 @@ def show_ticket_modal(gid):
     col_a, col_b = st.columns(2)
     with col_a:
         st.markdown(f"**Category:** {task.get('category')}")
+        st.markdown(f"**Department:** {task.get('section_name') or 'None'}")
         st.markdown(f"**Assignee:** {task.get('assignee_name') or 'Unassigned'}")
     with col_b:
         st.markdown(f"**Status:** {'Completed' if task.get('completed') else 'Open'}")
@@ -479,8 +517,30 @@ def show_ticket_modal(gid):
         st.markdown(f"[View in Asana]({task.get('asana_url')})")
         
     st.markdown("---")
-    
     st.markdown("**Actions:**")
+    
+    # 1. Move Department Action
+    try:
+        sections_map = fetch_asana_sections()
+        section_names = list(sections_map.keys())
+        current_sec = task.get("section_name")
+        default_index = section_names.index(current_sec) if current_sec in section_names else 0
+        
+        selected_sec = st.selectbox("Move to Department / Column:", section_names, index=default_index)
+        if selected_sec != current_sec:
+            if st.button("Confirm Move"):
+                with st.spinner("Moving task in Asana..."):
+                    try:
+                        new_gid = sections_map[selected_sec]
+                        move_task_to_section_in_asana(gid, new_gid, selected_sec)
+                        st.success(f"Moved to {selected_sec}!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to move: {e}")
+    except Exception as e:
+        st.caption(f"Could not load departments: {e}")
+
+    # 2. Complete/Reopen Action
     is_completed = task.get("completed", False)
     btn_label = "✅ Mark as Completed" if not is_completed else "↩️ Reopen Ticket"
     
@@ -488,7 +548,7 @@ def show_ticket_modal(gid):
         with st.spinner("Updating Asana..."):
             try:
                 toggle_task_status_in_asana(gid, is_completed)
-                st.success("Ticket updated successfully!")
+                st.success("Ticket status updated!")
                 st.rerun() 
             except Exception as e:
                 st.error(f"Failed to update Asana: {e}")
@@ -506,12 +566,14 @@ def show_ticket_modal(gid):
 def render_tickets(dataframe):
     for idx, row in dataframe.iterrows():
         status_text = "Completed" if row["completed"] else "Open"
+        sec_name = row.get("section_name") or "No Dept"
         
         with st.container():
             st.markdown(f"""
             <div class="ticket-card">
                 <div>
                     <span class="dot-indicator"></span>
+                    <span class="badge badge-section">{sec_name}</span>
                     <span class="badge badge-category">{row['category']}</span>
                     <span class="badge badge-status">{status_text}</span>
                 </div>
@@ -521,7 +583,6 @@ def render_tickets(dataframe):
             </div>
             """, unsafe_allow_html=True)
             
-            # --- Inline Action Buttons ---
             col_btn1, col_btn2, col_blank = st.columns([1.5, 2, 6])
             with col_btn1:
                 if st.button("🔍 View Details", key=f"btn_{row['gid']}", type="tertiary"):
