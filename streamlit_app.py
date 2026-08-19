@@ -231,6 +231,8 @@ if not check_password():
 def get_db_connection():
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
+# Cache the sections for 10 minutes so it doesn't slow down your app
+@st.cache_data(ttl=600)
 def fetch_asana_sections():
     """Fetches list of sections directly from Asana API."""
     token = st.secrets["ASANA_TOKEN"]
@@ -283,7 +285,7 @@ def toggle_task_status_in_asana(gid, current_status):
     finally:
         conn.close()
 
-def query_dashboard(category, status, assignee, overdue, search, section, date_range=None):
+def query_dashboard(category, status, assignee, overdue, search, section):
     conn = get_db_connection()
     try:
         conditions = []
@@ -316,14 +318,6 @@ def query_dashboard(category, status, assignee, overdue, search, section, date_r
         if search:
             conditions.append("(name ILIKE %s OR description ILIKE %s OR assignee_name ILIKE %s)")
             values.extend([f"%{search}%"] * 3)
-
-        if date_range:
-            if len(date_range) == 2:
-                conditions.append("due_on >= %s AND due_on <= %s")
-                values.extend([date_range[0], date_range[1]])
-            elif len(date_range) == 1:
-                conditions.append("due_on = %s")
-                values.append(date_range[0])
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -378,14 +372,25 @@ def fetch_ticket_details(gid):
         conn.close()
 
 
+# --- INTERACTIVE CALLBACKS ---
+def handle_quick_move(task_gid, widget_key, current_sec):
+    """Callback fired instantly when the dropdown on the ticket card is changed."""
+    new_sec = st.session_state[widget_key]
+    if new_sec != current_sec:
+        sections_map = fetch_asana_sections()
+        new_gid = sections_map.get(new_sec)
+        if new_gid:
+            move_task_to_section_in_asana(task_gid, new_gid, new_sec)
+            st.toast(f"Moved to {new_sec}")
+
+
 # --- SIDEBAR / FILTERS ---
 st.sidebar.markdown("<p style='color:#e06d53; font-weight:700; font-size:0.75rem; letter-spacing:1px;'>ORGANIZE</p>", unsafe_allow_html=True)
 
 search_query = st.sidebar.text_input("Find a ticket", placeholder="Name, detail, person...", label_visibility="visible")
-date_range = st.sidebar.date_input("Due Date Range", value=[], help="Select start and end dates.")
 status_filter = st.sidebar.selectbox("Status", ["All tickets", "Open", "Completed", "Active", "Removed"], index=1)
 
-_df, cat_list, sec_list, assign_options, stats, sync_run = query_dashboard("", "All tickets", "Everyone", False, "", "All", None)
+_df, cat_list, sec_list, assign_options, stats, sync_run = query_dashboard("", "All tickets", "Everyone", False, "", "All")
 
 sec_options = ["All"] + [s[0] for s in sec_list if s[0]]
 section_filter = st.sidebar.selectbox("Department / Section", sec_options)
@@ -428,7 +433,7 @@ st.markdown(f"""
 
 
 # --- DATA FETCH ---
-df, _, _, _, _, sync_run = query_dashboard(category_filter, status_filter, assignee_filter, overdue_filter, search_query, section_filter, date_range)
+df, _, _, _, _, sync_run = query_dashboard(category_filter, status_filter, assignee_filter, overdue_filter, search_query, section_filter)
 
 
 # --- WORK QUEUE HEADER ---
@@ -519,28 +524,7 @@ def show_ticket_modal(gid):
     st.markdown("---")
     st.markdown("**Actions:**")
     
-    # 1. Move Department Action
-    try:
-        sections_map = fetch_asana_sections()
-        section_names = list(sections_map.keys())
-        current_sec = task.get("section_name")
-        default_index = section_names.index(current_sec) if current_sec in section_names else 0
-        
-        selected_sec = st.selectbox("Move to Department / Column:", section_names, index=default_index)
-        if selected_sec != current_sec:
-            if st.button("Confirm Move"):
-                with st.spinner("Moving task in Asana..."):
-                    try:
-                        new_gid = sections_map[selected_sec]
-                        move_task_to_section_in_asana(gid, new_gid, selected_sec)
-                        st.success(f"Moved to {selected_sec}!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to move: {e}")
-    except Exception as e:
-        st.caption(f"Could not load departments: {e}")
-
-    # 2. Complete/Reopen Action
+    # Complete/Reopen Action
     is_completed = task.get("completed", False)
     btn_label = "✅ Mark as Completed" if not is_completed else "↩️ Reopen Ticket"
     
@@ -564,16 +548,22 @@ def show_ticket_modal(gid):
 
 # --- DISPLAY TICKET CARDS ---
 def render_tickets(dataframe):
+    try:
+        sections_map = fetch_asana_sections()
+        section_names = list(sections_map.keys())
+    except Exception:
+        section_names = []
+
     for idx, row in dataframe.iterrows():
         status_text = "Completed" if row["completed"] else "Open"
-        sec_name = row.get("section_name") or "No Dept"
+        current_sec = row.get("section_name") or "No Dept"
         
         with st.container():
             st.markdown(f"""
             <div class="ticket-card">
                 <div>
                     <span class="dot-indicator"></span>
-                    <span class="badge badge-section">{sec_name}</span>
+                    <span class="badge badge-section">{current_sec}</span>
                     <span class="badge badge-category">{row['category']}</span>
                     <span class="badge badge-status">{status_text}</span>
                 </div>
@@ -583,7 +573,10 @@ def render_tickets(dataframe):
             </div>
             """, unsafe_allow_html=True)
             
-            col_btn1, col_btn2, col_blank = st.columns([1.5, 2, 6])
+            # --- Inline Action Buttons & Dropdown ---
+            # Creates 4 columns: View Button | Complete Button | Move Dropdown | Blank Space
+            col_btn1, col_btn2, col_dd, col_blank = st.columns([1.5, 2, 3, 5.5])
+            
             with col_btn1:
                 if st.button("🔍 View Details", key=f"btn_{row['gid']}", type="tertiary"):
                     show_ticket_modal(row['gid'])
@@ -597,6 +590,21 @@ def render_tickets(dataframe):
                             st.rerun()
                         except Exception as e:
                             st.error(f"Failed to update Asana: {e}")
+                            
+            with col_dd:
+                if section_names:
+                    default_index = section_names.index(current_sec) if current_sec in section_names else 0
+                    widget_key = f"sec_dd_{row['gid']}"
+                    
+                    st.selectbox(
+                        "Move Dept:",
+                        options=section_names,
+                        index=default_index,
+                        key=widget_key,
+                        on_change=handle_quick_move,
+                        args=(row['gid'], widget_key, current_sec),
+                        label_visibility="collapsed" # Hides the label so it fits perfectly
+                    )
             
             st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
 
@@ -614,5 +622,7 @@ else:
             st.markdown("<h3 style='color: #e06d53; margin-top: 2rem;'>Closed Tickets</h3>", unsafe_allow_html=True)
             st.divider()
             render_tickets(closed_df)
+    else:
+        render_tickets(df)
     else:
         render_tickets(df)
