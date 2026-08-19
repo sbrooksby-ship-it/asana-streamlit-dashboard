@@ -624,5 +624,3 @@ else:
             render_tickets(closed_df)
     else:
         render_tickets(df)
-    else:
-        render_tickets(df)
