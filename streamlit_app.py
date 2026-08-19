@@ -35,24 +35,28 @@ st.markdown("""
         max-width: 600px; 
     }
     
-    /* Input & Select Box Overrides */
-    .stTextInput div[data-baseweb="base-input"], 
+    /* --- FORCE ALL INPUTS & SELECTBOXES TO PURE WHITE --- */
+    .stTextInput div[data-baseweb="base-input"],
+    .stSelectbox,
+    .stSelectbox > div,
     .stSelectbox div[data-baseweb="select"],
+    .stSelectbox div[data-baseweb="select"] > div,
+    .stSelectbox div[data-baseweb="select"] div,
     div[data-baseweb="select"],
-    div[data-baseweb="select"] > div,
-    div[data-baseweb="input"] {
+    div[data-baseweb="select"] > div {
         background-color: #ffffff !important;
-        border: 1px solid #c3c3c3 !important;
+        background: #ffffff !important;
+        color: #111111 !important;
+    }
+    
+    /* Strong Gray Borders */
+    .stTextInput div[data-baseweb="base-input"],
+    .stSelectbox div[data-baseweb="select"] {
+        border: 1px solid #b0b0b0 !important;
         border-radius: 4px !important;
-        color: #111111 !important;
     }
     
-    .stSelectbox div[data-baseweb="select"] * {
-        background-color: #ffffff !important;
-        color: #111111 !important;
-    }
-    
-    .stTextInput input {
+    .stTextInput input, .stSelectbox span {
         color: #111111 !important;
     }
     
