@@ -101,6 +101,13 @@ st.markdown("""
     .ticket-assignee { font-size: 0.8rem; color: #888; }
     .dot-indicator { height: 10px; width: 10px; background-color: #e06d53; border-radius: 50%; display: inline-block; margin-right: 10px; }
     
+    /* Category Bar Styling */
+    .cat-bar-container { display: flex; align-items: center; margin-bottom: 12px; }
+    .cat-bar-label { width: 180px; font-size: 0.85rem; color: #555; }
+    .cat-bar-track { flex-grow: 1; height: 10px; background-color: #e9ecef; margin: 0 15px; border-radius: 2px; overflow: hidden; }
+    .cat-bar-fill { height: 100%; }
+    .cat-bar-count { font-weight: 700; font-size: 0.9rem; width: 30px; text-align: right; }
+
     /* Tabs styling */
     .stTabs [data-baseweb="tab-list"] { gap: 2rem; }
     .stTabs [data-baseweb="tab"] { font-weight: 600; font-size: 1.1rem; }
@@ -146,7 +153,6 @@ def fetch_asana_sections():
 
 @st.cache_data(ttl=3600)
 def fetch_asana_users():
-    """Fetches full list of users in your Asana Workspace."""
     headers = {"Authorization": f"Bearer {st.secrets['ASANA_TOKEN']}"}
     proj_res = requests.get(f"https://app.asana.com/api/1.0/projects/{st.secrets['PROJECT_GID']}", headers=headers)
     if not proj_res.ok: return {}
@@ -216,6 +222,21 @@ def query_dashboard(category, status, assignee, overdue, search, section):
             sync_run = cur.fetchone() or ("never", None, 0, None)
 
         return df, categories, sections, assignees, stats, sync_run
+    finally:
+        conn.close()
+
+def fetch_ticket_details(gid):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM tasks WHERE gid = %s", (gid,))
+            row = cur.fetchone()
+            columns = [desc[0] for desc in cur.description] if row else []
+            task = dict(zip(columns, row)) if row else None
+
+            cur.execute("SELECT changed_at, change_type, details FROM task_history WHERE task_gid = %s ORDER BY changed_at DESC", (gid,))
+            history = cur.fetchall()
+        return task, history
     finally:
         conn.close()
 
@@ -295,6 +316,37 @@ with tab_queue:
             with st.spinner("Syncing..."):
                 run_sync(); st.cache_data.clear(); st.rerun()
 
+    # --- CATEGORY BAR CHART ---
+    if not df.empty:
+        cat_counts = df['category'].value_counts()
+        max_val = cat_counts.max()
+        
+        st.markdown("<div style='margin-bottom: 25px;'>", unsafe_allow_html=True)
+        for cat, count in cat_counts.items():
+            width_pct = int((count / max_val) * 100) if max_val > 0 else 0
+            cat_colors = get_category_colors(cat)
+            st.markdown(f"""
+            <div class="cat-bar-container">
+                <div class="cat-bar-label">{cat}</div>
+                <div class="cat-bar-track">
+                    <div class="cat-bar-fill" style="width: {width_pct}%; background-color: {cat_colors['bar']};"></div>
+                </div>
+                <div class="cat-bar-count">{count}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # --- CSV EXPORT ---
+    if not df.empty:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Name", "Category", "Department/Section", "Status", "Assignee", "Due Date", "Description"])
+        for _, task in df.iterrows():
+            writer.writerow([task["name"], task["category"], task.get("section_name") or "", "Completed" if task["completed"] else "Open", task["assignee_name"] or "Unassigned", task["due_on"] or "", task["description"]])
+        
+        st.download_button(label="Export CSV ↓", data=output.getvalue(), file_name="ticket-export.csv", mime="text/csv")
+        st.divider()
+
     # Pagination Logic
     ITEMS_PER_PAGE = 20
     total_pages = math.ceil(len(df) / ITEMS_PER_PAGE) if not df.empty else 1
@@ -372,7 +424,7 @@ with tab_queue:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 4 Columns for actions
+                # Columns for actions
                 col_btn1, col_btn2, col_sec, col_assign, col_blank = st.columns([1.5, 1.5, 2.5, 2.5, 1])
                 
                 with col_btn1:
@@ -419,7 +471,6 @@ with tab_analytics:
     if df.empty:
         st.info("Not enough data to generate analytics.")
     else:
-        # Convert timestamps for plotting
         df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce')
         df['modified_at'] = pd.to_datetime(df['modified_at'], errors='coerce')
         
@@ -442,8 +493,6 @@ with tab_analytics:
                 avg_days = closed_df['days_to_close'].mean()
                 
                 st.metric("Workspace Average", f"{avg_days:.1f} Days")
-                
-                # Chart by category
                 st.markdown("<span style='font-size:0.8rem; color:#666;'>Avg days to close by Category</span>", unsafe_allow_html=True)
                 cat_days = closed_df.groupby('category')['days_to_close'].mean()
                 st.bar_chart(cat_days, color="#6b8e72")
@@ -455,7 +504,6 @@ with tab_analytics:
         vol_df = df.copy()
         vol_df = vol_df.dropna(subset=['created_at'])
         if not vol_df.empty:
-            # Group by start of week
             vol_df['Week'] = vol_df['created_at'].dt.to_period('W').dt.start_time
             weekly_counts = vol_df.groupby('Week').size()
             st.line_chart(weekly_counts, color="#5b7b9a")
