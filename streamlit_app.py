@@ -12,6 +12,25 @@ from asana_sync import main as run_sync
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Ticket desk", layout="wide")
 
+# --- COLOR PALETTE SYSTEM FOR CATEGORIES ---
+CATEGORY_PALETTE = [
+    {"bar": "#6b8e72", "bg": "#eaf2eb", "text": "#2d4a32"},  # Sage
+    {"bar": "#5b7b9a", "bg": "#e8f0f8", "text": "#1f3d5c"},  # Slate Blue
+    {"bar": "#d99b38", "bg": "#fdf5e6", "text": "#7a5210"},  # Warm Amber
+    {"bar": "#b85b75", "bg": "#f9eef2", "text": "#6b2135"},  # Muted Rose
+    {"bar": "#4a969b", "bg": "#e6f4f5", "text": "#1d4e52"},  # Muted Teal
+    {"bar": "#8a7b6b", "bg": "#f2eee9", "text": "#473d32"},  # Warm Taupe
+]
+
+def get_category_colors(cat_name: str) -> dict:
+    """Returns matching bar, badge background, and badge text colors for a category."""
+    if cat_name == "Continuous Improvement":
+        return {"bar": "#e06d53", "bg": "#fbebe8", "text": "#b33a1f"}
+    
+    idx = abs(hash(cat_name)) % len(CATEGORY_PALETTE)
+    return CATEGORY_PALETTE[idx]
+
+
 # --- CUSTOM STYLING ---
 st.markdown("""
 <style>
@@ -35,7 +54,7 @@ st.markdown("""
         max-width: 600px; 
     }
     
-    /* --- FORCE ALL SELECTBOXES & DROPDOWNS TO PURE WHITE --- */
+    /* Input & Selectbox Whitespace Rules */
     [data-testid="stSelectbox"],
     [data-testid="stSelectbox"] > div,
     [data-testid="stSelectbox"] > div > div,
@@ -50,7 +69,6 @@ st.markdown("""
         color: #111111 !important;
     }
     
-    /* Input & Select Borders */
     .stTextInput div[data-baseweb="base-input"],
     [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
     div[data-baseweb="select"] > div {
@@ -134,10 +152,6 @@ st.markdown("""
         font-weight: 600;
         margin-right: 6px;
     }
-    .badge-category {
-        background-color: #d1e7dd;
-        color: #0f5132;
-    }
     .badge-section {
         background-color: #cfe2ff;
         color: #084298;
@@ -199,7 +213,6 @@ st.markdown("""
     }
     .cat-bar-fill {
         height: 100%;
-        background-color: #e06d53;
     }
     .cat-bar-count {
         font-weight: 700;
@@ -477,11 +490,12 @@ if not df.empty:
     st.markdown("<div style='margin-bottom: 25px;'>", unsafe_allow_html=True)
     for cat, count in cat_counts.items():
         width_pct = int((count / max_val) * 100) if max_val > 0 else 0
+        cat_colors = get_category_colors(cat)
         st.markdown(f"""
         <div class="cat-bar-container">
             <div class="cat-bar-label">{cat}</div>
             <div class="cat-bar-track">
-                <div class="cat-bar-fill" style="width: {width_pct}%;"></div>
+                <div class="cat-bar-fill" style="width: {width_pct}%; background-color: {cat_colors['bar']};"></div>
             </div>
             <div class="cat-bar-count">{count}</div>
         </div>
@@ -587,6 +601,7 @@ def render_tickets(dataframe):
     for idx, row in dataframe.iterrows():
         status_text = "Completed" if row["completed"] else "Open"
         current_sec = row.get("section_name") or "No Dept"
+        cat_colors = get_category_colors(row['category'])
         
         with st.container():
             st.markdown(f"""
@@ -594,7 +609,7 @@ def render_tickets(dataframe):
                 <div>
                     <span class="dot-indicator"></span>
                     <span class="badge badge-section">{current_sec}</span>
-                    <span class="badge badge-category">{row['category']}</span>
+                    <span class="badge" style="background-color: {cat_colors['bg']}; color: {cat_colors['text']};">{row['category']}</span>
                     <span class="badge badge-status">{status_text}</span>
                 </div>
                 <div class="ticket-title">{row['name']}</div>
