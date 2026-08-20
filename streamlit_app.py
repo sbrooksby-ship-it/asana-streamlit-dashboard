@@ -55,7 +55,8 @@ st.markdown("""
     
     /* --- SLIM DOWN DROPDOWNS & INPUTS --- */
     div[data-baseweb="select"] > div,
-    .stTextInput div[data-baseweb="base-input"] {
+    .stTextInput div[data-baseweb="base-input"],
+    div[data-baseweb="input"] {
         min-height: 34px !important; 
         padding-top: 0px !important;
         padding-bottom: 0px !important;
@@ -93,7 +94,7 @@ st.markdown("""
     .main-title { font-size: 3rem; font-weight: 800; color: #1a1a1a; margin-top: -5px; margin-bottom: 0px; line-height: 1.1; }
     .main-tagline { color: #666; font-size: 0.95rem; margin-bottom: 1.5rem; }
     
-    /* --- MODERN FLOATING CARDS (Soft Shadows instead of hard borders) --- */
+    /* --- MODERN FLOATING CARDS --- */
     .metric-container { 
         display: flex; 
         background-color: #ffffff; 
@@ -112,7 +113,7 @@ st.markdown("""
         border: none !important;
         box-shadow: 0 4px 12px rgba(0,0,0,0.03) !important;
         border-radius: 6px; 
-        padding: 20px 22px 10px 22px; /* Less padding on bottom to hug buttons */
+        padding: 20px 22px 10px 22px; 
         margin-bottom: 8px; 
     }
     
@@ -210,7 +211,7 @@ def add_comment_to_asana(gid, text):
     headers = {"Authorization": f"Bearer {st.secrets['ASANA_TOKEN']}", "Content-Type": "application/json"}
     requests.post(f"https://app.asana.com/api/1.0/tasks/{gid}/stories", json={"data": {"text": text}}, headers=headers).raise_for_status()
 
-def query_dashboard(category, status, assignee, overdue, search, section):
+def query_dashboard(category, status, assignee, overdue, search, section, date_range=None):
     conn = get_db_connection()
     try:
         conditions = []; values = []
@@ -230,6 +231,14 @@ def query_dashboard(category, status, assignee, overdue, search, section):
         if search:
             conditions.append("(name ILIKE %s OR description ILIKE %s OR assignee_name ILIKE %s)")
             values.extend([f"%{search}%"] * 3)
+
+        if date_range:
+            if len(date_range) == 2:
+                conditions.append("due_on >= %s AND due_on <= %s")
+                values.extend([date_range[0], date_range[1]])
+            elif len(date_range) == 1:
+                conditions.append("due_on = %s")
+                values.append(date_range[0])
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         query = f"SELECT * FROM tasks {where_clause} ORDER BY completed ASC, due_on NULLS LAST, modified_at DESC NULLS LAST, name"
@@ -288,9 +297,10 @@ def handle_reassign(task_gid, widget_key, current_assignee):
 # --- SIDEBAR / FILTERS ---
 st.sidebar.markdown("<p style='color:#e06d53; font-weight:700; font-size:0.75rem; letter-spacing:1px;'>ORGANIZE</p>", unsafe_allow_html=True)
 search_query = st.sidebar.text_input("Find a ticket", placeholder="Name, detail, person...", label_visibility="visible")
+date_range = st.sidebar.date_input("Due Date Range", value=[], help="Select start and end dates.")
 status_filter = st.sidebar.selectbox("Status", ["All tickets", "Open", "Completed", "Active", "Removed"], index=1)
 
-_df, cat_list, sec_list, assign_options, stats, sync_run = query_dashboard("", "All tickets", "Everyone", False, "", "All")
+_df, cat_list, sec_list, assign_options, stats, sync_run = query_dashboard("", "All tickets", "Everyone", False, "", "All", None)
 
 sec_options = ["All"] + [s[0] for s in sec_list if s[0]]
 section_filter = st.sidebar.selectbox("Department / Section", sec_options)
@@ -324,7 +334,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-df, _, _, _, _, sync_run = query_dashboard(category_filter, status_filter, assignee_filter, overdue_filter, search_query, section_filter)
+df, _, _, _, _, sync_run = query_dashboard(category_filter, status_filter, assignee_filter, overdue_filter, search_query, section_filter, date_range)
 
 
 # --- SETUP TABS ---
@@ -338,7 +348,6 @@ with tab_queue:
         last_sync_str = sync_run[1].strftime("%b %d, %Y at %I:%M %p") if sync_run[1] else "Never"
         st.markdown(f"<p style='font-size:0.8rem; color:#888; margin-bottom:15px;'>Last sync: {last_sync_str} · {sync_run[0].title()}</p>", unsafe_allow_html=True)
     with col_q2:
-        # Changed type="primary" to type="secondary" to soften the button visual
         if st.button("🔄 Sync now", type="secondary", use_container_width=True):
             with st.spinner("Syncing..."):
                 run_sync(); st.cache_data.clear(); st.rerun()
