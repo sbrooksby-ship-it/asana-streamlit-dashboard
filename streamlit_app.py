@@ -53,6 +53,21 @@ st.markdown("""
         max-width: 600px; 
     }
     
+    /* --- SLIM DOWN DROPDOWNS & INPUTS --- */
+    div[data-baseweb="select"] > div,
+    .stTextInput div[data-baseweb="base-input"] {
+        min-height: 34px !important; 
+        padding-top: 0px !important;
+        padding-bottom: 0px !important;
+        border: 1px solid #d0d0d0 !important;
+        border-radius: 4px !important;
+    }
+    
+    /* Adjust font size inside dropdowns for elegance */
+    div[data-baseweb="select"] * {
+        font-size: 0.9rem !important;
+    }
+    
     /* Force inputs to white */
     [data-testid="stSelectbox"],
     [data-testid="stSelectbox"] > div,
@@ -61,51 +76,62 @@ st.markdown("""
     [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
     div[data-baseweb="select"],
     div[data-baseweb="select"] > div,
-    div[data-baseweb="select"] div,
-    div[data-baseweb="select"] * {
+    div[data-baseweb="select"] div {
         background-color: #ffffff !important;
         background: #ffffff !important;
         color: #111111 !important;
     }
     
-    .stTextInput div[data-baseweb="base-input"],
-    [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-    div[data-baseweb="select"] > div {
-        border: 1px solid #b0b0b0 !important;
-        border-radius: 4px !important;
-    }
-    
     .stTextInput input, .stSelectbox span, .stTextArea textarea {
         color: #111111 !important;
         background-color: #ffffff !important;
+        font-size: 0.9rem !important;
     }
     
+    /* --- TYPOGRAPHY --- */
     .sub-header { color: #e06d53; font-size: 0.8rem; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 0px; }
     .main-title { font-size: 3rem; font-weight: 800; color: #1a1a1a; margin-top: -5px; margin-bottom: 0px; line-height: 1.1; }
     .main-tagline { color: #666; font-size: 0.95rem; margin-bottom: 1.5rem; }
     
-    .metric-container { display: flex; background-color: #ffffff; border: 1px solid #e2ded5; border-radius: 4px; margin-bottom: 2rem; }
-    .metric-box { flex: 1; padding: 12px 20px; border-right: 1px solid #e2ded5; display: flex; justify-content: space-between; align-items: center; }
+    /* --- MODERN FLOATING CARDS (Soft Shadows instead of hard borders) --- */
+    .metric-container { 
+        display: flex; 
+        background-color: #ffffff; 
+        border: none !important; 
+        box-shadow: 0 4px 12px rgba(0,0,0,0.03) !important;
+        border-radius: 6px; 
+        margin-bottom: 2rem; 
+    }
+    .metric-box { flex: 1; padding: 16px 20px; border-right: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; }
     .metric-box:last-child { border-right: none; }
     .metric-label { font-size: 0.85rem; color: #777; }
-    .metric-value { font-size: 1.4rem; font-weight: 700; color: #1a1a1a; }
+    .metric-value { font-size: 1.5rem; font-weight: 800; color: #1a1a1a; }
     
-    .ticket-card { background: #ffffff; border: 1px solid #e2ded5; border-radius: 4px; padding: 18px 22px; margin-bottom: 4px; }
+    .ticket-card { 
+        background: #ffffff; 
+        border: none !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.03) !important;
+        border-radius: 6px; 
+        padding: 20px 22px 10px 22px; /* Less padding on bottom to hug buttons */
+        margin-bottom: 8px; 
+    }
     
-    .badge { display: inline-block; padding: 2px 10px; border-radius: 3px; font-size: 0.75rem; font-weight: 600; margin-right: 6px; }
+    /* --- BADGES --- */
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 0.72rem; font-weight: 600; margin-right: 6px; }
     .badge-section { background-color: #cfe2ff; color: #084298; }
     .badge-status { background-color: #e2e3e5; color: #41464b; }
     
+    /* --- TICKET CONTENT --- */
     .ticket-title { font-size: 1.25rem; font-weight: 700; color: #111; margin: 8px 0px 6px 0px; }
-    .ticket-desc { color: #666; font-size: 0.88rem; line-height: 1.4; margin-bottom: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .ticket-desc { color: #666; font-size: 0.9rem; line-height: 1.4; margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .ticket-assignee { font-size: 0.8rem; color: #888; }
     .dot-indicator { height: 10px; width: 10px; background-color: #e06d53; border-radius: 50%; display: inline-block; margin-right: 10px; }
     
     /* Category Bar Styling */
     .cat-bar-container { display: flex; align-items: center; margin-bottom: 12px; }
     .cat-bar-label { width: 180px; font-size: 0.85rem; color: #555; }
-    .cat-bar-track { flex-grow: 1; height: 10px; background-color: #e9ecef; margin: 0 15px; border-radius: 2px; overflow: hidden; }
-    .cat-bar-fill { height: 100%; }
+    .cat-bar-track { flex-grow: 1; height: 10px; background-color: #e9ecef; margin: 0 15px; border-radius: 4px; overflow: hidden; }
+    .cat-bar-fill { height: 100%; border-radius: 4px; }
     .cat-bar-count { font-weight: 700; font-size: 0.9rem; width: 30px; text-align: right; }
 
     /* Tabs styling */
@@ -312,7 +338,8 @@ with tab_queue:
         last_sync_str = sync_run[1].strftime("%b %d, %Y at %I:%M %p") if sync_run[1] else "Never"
         st.markdown(f"<p style='font-size:0.8rem; color:#888; margin-bottom:15px;'>Last sync: {last_sync_str} · {sync_run[0].title()}</p>", unsafe_allow_html=True)
     with col_q2:
-        if st.button("🔄 Sync now", type="primary", use_container_width=True):
+        # Changed type="primary" to type="secondary" to soften the button visual
+        if st.button("🔄 Sync now", type="secondary", use_container_width=True):
             with st.spinner("Syncing..."):
                 run_sync(); st.cache_data.clear(); st.rerun()
 
@@ -441,7 +468,7 @@ with tab_queue:
                         idx = user_names.index(current_assignee) if current_assignee in user_names else 0
                         st.selectbox("Assign:", user_names, index=idx, key=f"a_{row['gid']}", on_change=handle_reassign, args=(row['gid'], f"a_{row['gid']}", current_assignee), label_visibility="collapsed")
                 
-                st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-bottom: 28px;'></div>", unsafe_allow_html=True)
 
     if paged_df.empty:
         st.info("No tickets found matching your filters.")
